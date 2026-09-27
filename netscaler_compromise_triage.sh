@@ -20,10 +20,46 @@
 # - It does not modify configuration, kill processes, delete files, or shut down.
 #
 
-VERSION="0.3.0"
+VERSION="0.5.0"
 HIGH=0
 WARN=0
 INFO=0
+SUSPICIOUS_FILES=""
+
+# Identify this script so our own execution is not reported as suspicious.
+SELF_PID="$$"
+SELF_ARG="$0"
+SELF_NAME="$(basename "$0" 2>/dev/null)"
+[ -n "$SELF_NAME" ] || SELF_NAME="netscaler_compromise_triage.sh"
+
+add_suspicious_file()
+{
+    p="$1"
+    [ -n "$p" ] || return
+
+    # Never report this triage script itself as a suspicious artifact.
+    case "$p" in
+        "$SELF_ARG"|*/"$SELF_NAME")
+            return
+            ;;
+    esac
+
+    case "
+$SUSPICIOUS_FILES
+" in
+        *"
+$p
+"*) ;;
+        *)
+            if [ -n "$SUSPICIOUS_FILES" ]; then
+                SUSPICIOUS_FILES="$SUSPICIOUS_FILES
+$p"
+            else
+                SUSPICIOUS_FILES="$p"
+            fi
+            ;;
+    esac
+}
 
 section()
 {
@@ -65,6 +101,7 @@ check_known_file()
     why="$2"
     if [ -e "$p" ]; then
         high "$why: $p"
+        add_suspicious_file "$p"
         show_file "$p"
     fi
 }
@@ -75,6 +112,7 @@ check_known_dir()
     why="$2"
     if [ -d "$p" ]; then
         high "$why: $p"
+        add_suspicious_file "$p"
         ls -ald "$p" 2>/dev/null
     fi
 }
@@ -85,6 +123,7 @@ echo "Date: $(date 2>/dev/null)"
 echo "Kernel: $(uname -a 2>/dev/null)"
 echo
 echo "This tool performs local IOC and post-exploitation checks only."
+echo "Self exclusion: $SELF_NAME (PID $SELF_PID)"
 
 section "1. HIGH-CONFIDENCE KNOWN NETSCALER COMPROMISE PATHS"
 
@@ -117,14 +156,24 @@ for p in /var/tmp/sh /var/tmp/bash; do
         else
             warn "Shell-like binary present in temporary directory: $p"
         fi
+        add_suspicious_file "$p"
         show_file "$p"
     fi
 done
 
-SUID_OUT="$(find /var \( -perm -4001 -or \( -perm -4010 -group nobody \) \) -user root -exec ls -al {} \; 2>/dev/null)"
-if [ -n "$SUID_OUT" ]; then
+SUID_PATHS="$(find /var \( -perm -4001 -or \( -perm -4010 -group nobody \) \) -user root -print 2>/dev/null)"
+if [ -n "$SUID_PATHS" ]; then
     warn "Root-owned SUID files found under /var; review for unexpected additions:"
-    echo "$SUID_OUT"
+    echo "$SUID_PATHS" | while IFS= read p; do
+        [ -n "$p" ] && ls -al "$p" 2>/dev/null
+    done
+    OLDIFS="$IFS"
+    IFS='
+'
+    for p in $SUID_PATHS; do
+        [ -n "$p" ] && add_suspicious_file "$p"
+    done
+    IFS="$OLDIFS"
 else
     info "No root-owned SUID files found under /var by the NCSC-style check."
 fi
@@ -133,18 +182,34 @@ section "3. WEBROOT / WEBSHELL HUNT"
 
 # NCSC-NL uses PHP/XHTML files outside the normal admin_ui tree as live-host
 # compromise hunting signals.
-PHP_OUT="$(find /var/netscaler/ -type f -name '*.php' -not -path '/var/netscaler/gui/admin_ui/*' -exec ls -al {} \; 2>/dev/null)"
-if [ -n "$PHP_OUT" ]; then
+PHP_PATHS="$(find /var/netscaler/ -type f -name '*.php' -not -path '/var/netscaler/gui/admin_ui/*' -print 2>/dev/null)"
+if [ -n "$PHP_PATHS" ]; then
     warn "PHP files exist under /var/netscaler outside gui/admin_ui:"
-    echo "$PHP_OUT"
+    OLDIFS="$IFS"
+    IFS='
+'
+    for p in $PHP_PATHS; do
+        [ -n "$p" ] || continue
+        add_suspicious_file "$p"
+        ls -al "$p" 2>/dev/null
+    done
+    IFS="$OLDIFS"
 else
     info "No unexpected PHP files found under /var/netscaler by this check."
 fi
 
-XHTML_OUT="$(find /var/netscaler/ -type f -name '*.xhtml' -not -path '/var/netscaler/gui/admin_ui/*' -exec ls -al {} \; 2>/dev/null)"
-if [ -n "$XHTML_OUT" ]; then
+XHTML_PATHS="$(find /var/netscaler/ -type f -name '*.xhtml' -not -path '/var/netscaler/gui/admin_ui/*' -print 2>/dev/null)"
+if [ -n "$XHTML_PATHS" ]; then
     warn "XHTML files exist under /var/netscaler outside gui/admin_ui:"
-    echo "$XHTML_OUT"
+    OLDIFS="$IFS"
+    IFS='
+'
+    for p in $XHTML_PATHS; do
+        [ -n "$p" ] || continue
+        add_suspicious_file "$p"
+        ls -al "$p" 2>/dev/null
+    done
+    IFS="$OLDIFS"
 else
     info "No unexpected XHTML files found under /var/netscaler by this check."
 fi
@@ -152,10 +217,18 @@ fi
 # Hunt for script-like files recently changed in common public/staging paths.
 for d in /var/vpn/themes /netscaler/logon /netscaler/portal/scripts /netscaler/portal/templates; do
     if [ -d "$d" ]; then
-        RECENT="$(find "$d" -type f -mtime -14 \( -name '*.php' -o -name '*.pl' -o -name '*.py' -o -name '*.sh' -o -name '*.xhtml' \) -exec ls -al {} \; 2>/dev/null)"
+        RECENT="$(find "$d" -type f -mtime -14 \( -name '*.php' -o -name '*.pl' -o -name '*.py' -o -name '*.sh' -o -name '*.xhtml' \) -print 2>/dev/null)"
         if [ -n "$RECENT" ]; then
             warn "Script-like files modified within 14 days under $d:"
-            echo "$RECENT"
+            OLDIFS="$IFS"
+            IFS='
+'
+            for p in $RECENT; do
+                [ -n "$p" ] || continue
+                add_suspicious_file "$p"
+                ls -al "$p" 2>/dev/null
+            done
+            IFS="$OLDIFS"
         fi
     fi
 done
@@ -167,38 +240,24 @@ section "4. KNOWN / HIGH-SIGNAL WEBSHELL CONTENT"
 # post-exploitation tradecraft.
 for d in /var/vpn/themes /netscaler/logon /netscaler/portal/scripts /netscaler/portal/templates /var/netscaler; do
     if [ -d "$d" ]; then
-        find "$d" -type f \
+        CANDIDATES="$(find "$d" -type f \
             -not -path '/var/netscaler/gui/admin_ui/*' \
             \( -name '*.php' -o -name '*.pl' -o -name '*.xhtml' -o -name '*.js' -o -name '*.txt' \) \
-            -print 2>/dev/null |
-        while IFS= read f; do
+            -print 2>/dev/null)"
+        OLDIFS="$IFS"
+        IFS='
+'
+        for f in $CANDIDATES; do
+            [ -n "$f" ] || continue
             if grep -E -q 'blv_encode|openssl_public_decrypt|[$]_REQUEST[[:space:]]*\[[[:space:]]*["'\'']123["'\'']|@eval[[:space:]]*\(' "$f" 2>/dev/null; then
-                echo "[HIGH-FILE] Suspicious webshell content: $f"
+                high "Suspicious webshell content: $f"
+                add_suspicious_file "$f"
                 ls -al "$f" 2>/dev/null
             fi
         done
+        IFS="$OLDIFS"
     fi
 done
-
-# Because the loop above executes in a pipeline/subshell on some /bin/sh
-# implementations, count the same high-signal content in a second lightweight
-# pass so the final exit status is reliable.
-CONTENT_HITS=0
-for d in /var/vpn/themes /netscaler/logon /netscaler/portal/scripts /netscaler/portal/templates /var/netscaler; do
-    if [ -d "$d" ]; then
-        for f in $(find "$d" -type f \
-            -not -path '/var/netscaler/gui/admin_ui/*' \
-            \( -name '*.php' -o -name '*.pl' -o -name '*.xhtml' -o -name '*.js' -o -name '*.txt' \) \
-            -print 2>/dev/null); do
-            if grep -E -q 'blv_encode|openssl_public_decrypt|[$]_REQUEST[[:space:]]*\[[[:space:]]*["'\'']123["'\'']|@eval[[:space:]]*\(' "$f" 2>/dev/null; then
-                CONTENT_HITS=$((CONTENT_HITS + 1))
-            fi
-        done
-    fi
-done
-if [ "$CONTENT_HITS" -gt 0 ]; then
-    HIGH=$((HIGH + CONTENT_HITS))
-fi
 
 section "5. PERSISTENCE CHECKS"
 
@@ -206,6 +265,7 @@ if [ -f /flash/nsconfig/rc.netscaler ]; then
     RC_HITS="$(grep -E -n 'python|perl|curl|wget|nohup|/var/tmp/|/tmp/|/var/nstmp/|nc[[:space:]]|netcat' /flash/nsconfig/rc.netscaler 2>/dev/null)"
     if [ -n "$RC_HITS" ]; then
         warn "Review commands in /flash/nsconfig/rc.netscaler:"
+        add_suspicious_file "/flash/nsconfig/rc.netscaler"
         echo "$RC_HITS"
     else
         info "No obvious scripting/downloader/temp-path persistence strings in rc.netscaler."
@@ -220,6 +280,7 @@ if [ -d /var/cron/tabs ]; then
         NOBODY_CRON="$(grep -v '^[[:space:]]*#' /var/cron/tabs/nobody 2>/dev/null | grep -v '^[[:space:]]*$')"
         if [ -n "$NOBODY_CRON" ]; then
             high "Non-empty nobody crontab present. Mandiant observed this persistence mechanism:"
+            add_suspicious_file "/var/cron/tabs/nobody"
             echo "$NOBODY_CRON"
         fi
     fi
@@ -227,6 +288,12 @@ if [ -d /var/cron/tabs ]; then
     CRON_HITS="$(grep -E -n '/var/tmp/|/tmp/|/var/nstmp/|curl|wget|python|perl|php|nohup|[[:space:]]nc[[:space:]]|netcat' /var/cron/tabs/* 2>/dev/null)"
     if [ -n "$CRON_HITS" ]; then
         warn "Crontab entries reference temporary paths, interpreters, or download/network tools:"
+        for cf in /var/cron/tabs/*; do
+            [ -f "$cf" ] || continue
+            if grep -E -q '/var/tmp/|/tmp/|/var/nstmp/|curl|wget|python|perl|php|nohup|[[:space:]]nc[[:space:]]|netcat' "$cf" 2>/dev/null; then
+                add_suspicious_file "$cf"
+            fi
+        done
         echo "$CRON_HITS"
     fi
 fi
@@ -235,18 +302,23 @@ section "6. RUNNING PROCESS HUNT"
 
 PS_OUT="$(ps auxww 2>/dev/null)"
 if [ -n "$PS_OUT" ]; then
-    PROC_HIGH="$(echo "$PS_OUT" | grep -E '/var/nstmp/\.nscache/httpd|/var/tmp/(the|npc|bash|sh)([[:space:]]|$)' | grep -v grep)"
+    # Exclude this triage script itself. It is commonly executed from /var/tmp,
+    # which would otherwise make the generic temp-directory process hunt flag
+    # its own /bin/sh command line.
+    FILTERED_PS="$(echo "$PS_OUT" | grep -v "$SELF_NAME" 2>/dev/null)"
+
+    PROC_HIGH="$(echo "$FILTERED_PS" | grep -E '/var/nstmp/\.nscache/httpd|/var/tmp/(the|npc|bash|sh)([[:space:]]|$)' | grep -v grep)"
     if [ -n "$PROC_HIGH" ]; then
         high "Known/high-signal suspicious process path is running:"
         echo "$PROC_HIGH"
     fi
 
-    PROC_WARN="$(echo "$PS_OUT" | grep -E '(^|[[:space:]])/var/tmp/|(^|[[:space:]])/tmp/' | grep -v grep)"
+    PROC_WARN="$(echo "$FILTERED_PS" | grep -E '(^|[[:space:]])/var/tmp/|(^|[[:space:]])/tmp/' | grep -v grep)"
     if [ -n "$PROC_WARN" ]; then
         warn "Processes executing from temporary directories:"
         echo "$PROC_WARN"
     else
-        info "No processes executing from /tmp or /var/tmp were found."
+        info "No unrelated processes executing from /tmp or /var/tmp were found."
     fi
 else
     warn "Unable to collect process list with ps auxww."
@@ -258,6 +330,7 @@ if [ -f /etc/httpd.conf ]; then
     EXT="$(grep 'httpd-php' /etc/httpd.conf 2>/dev/null | grep -oE '\.[A-Za-z0-9]+' 2>/dev/null | grep -Ev '\.phps?$' 2>/dev/null)"
     if [ -n "$EXT" ]; then
         warn "httpd.conf appears to associate PHP handling with nonstandard extension(s): $EXT"
+        add_suspicious_file "/etc/httpd.conf"
         for e in $EXT; do
             find /var/netscaler -type f -name "*$e" -exec ls -al {} \; 2>/dev/null
         done
@@ -266,23 +339,35 @@ if [ -f /etc/httpd.conf ]; then
     HTTPD_DENY="$(grep -E -n -C 1 '#[[:space:]]+Require all denied' /etc/httpd.conf 2>/dev/null)"
     if [ -n "$HTTPD_DENY" ]; then
         warn "Commented 'Require all denied' directive found in httpd.conf:"
+        add_suspicious_file "/etc/httpd.conf"
         echo "$HTTPD_DENY"
     fi
 
     HTTPD_PHP="$(grep -E -n -C 1 '#[[:space:]]+php_flag engine off' /etc/httpd.conf 2>/dev/null)"
     if [ -n "$HTTPD_PHP" ]; then
         warn "Commented 'php_flag engine off' directive found in httpd.conf:"
+        add_suspicious_file "/etc/httpd.conf"
         echo "$HTTPD_PHP"
     fi
 fi
 
 section "8. SHELL-HISTORY / POST-EXPLOITATION COMMAND HUNT"
 
+# History is treated as a weak hunting source. Ordinary administrative commands
+# such as "curl ... -o /var/tmp/..." are NOT suspicious by themselves, because
+# that is also a normal way to retrieve and run this triage script.
+#
+# Flag only stronger combinations tied to webroot modification, privilege
+# backdoors, documented malicious paths, or persistence.
 for h in /root/.history /root/.bash_history /var/log/bash.log; do
     if [ -f "$h" ]; then
-        HITS="$(grep -E -n '/var/vpn/themes|/netscaler/logon|/var/tmp/(bash|sh|the|npc)|chmod[[:space:]]+4[0-9][0-9][0-9]|openssl[[:space:]]+base64|base64[[:space:]]+-d|curl[[:space:]]|wget[[:space:]]|nohup[[:space:]]' "$h" 2>/dev/null)"
+        HITS="$(grep -E -n \
+'/var/vpn/themes/(info|prod|log|logout|vpn|config)\.php|/var/vpn/themes/imgs/(netscaler\.php|ctxHeaderLogon\.php|netscaler\.1)|/netscaler/logon/LogonPoint/uiareas/ui_style\.php|/netscaler/logon/sanpdebug\.php|/var/nstmp/\.nscache/httpd|/var/tmp/(the|npc)([[:space:]]|$)|chmod[[:space:]]+4[0-9][0-9][0-9][[:space:]]+(/var/tmp/|/tmp/)|/var/cron/tabs/nobody|rc\.netscaler.*(/var/tmp/|/tmp/|/var/nstmp/)' \
+"$h" 2>/dev/null | grep -v "$SELF_NAME" 2>/dev/null)"
+
         if [ -n "$HITS" ]; then
             warn "Potential post-exploitation commands in $h:"
+            add_suspicious_file "$h"
             echo "$HITS"
         fi
     fi
@@ -291,10 +376,18 @@ done
 section "9. NSPPE CORE DUMPS"
 
 if [ -d /var/core ]; then
-    CORES="$(find /var/core/ -iname 'NSPPE*' -exec ls -al {} \; 2>/dev/null)"
+    CORES="$(find /var/core/ -iname 'NSPPE*' -print 2>/dev/null)"
     if [ -n "$CORES" ]; then
         echo "[LOW] NSPPE core dumps exist. These are not proof of compromise, but preserve them:"
-        echo "$CORES"
+        OLDIFS="$IFS"
+        IFS='
+'
+        for p in $CORES; do
+            [ -n "$p" ] || continue
+            add_suspicious_file "$p"
+            ls -al "$p" 2>/dev/null
+        done
+        IFS="$OLDIFS"
     else
         info "No NSPPE core dumps found."
     fi
@@ -307,6 +400,7 @@ for log in /var/log/httpaccess.log /var/log/httpaccess.log.*; do
         ACCESS_HITS="$(grep -E -i '(/var/vpn/themes/)?(info|prod|log|logout|vpn|config)\.php|/themes/imgs/(netscaler\.php|ctxHeaderLogon\.php|netscaler\.1)|/LogonPoint/uiareas/ui_style\.php|/sanpdebug\.php' "$log" 2>/dev/null)"
         if [ -n "$ACCESS_HITS" ]; then
             high "HTTP access log contains requests matching documented NetScaler webshell paths in $log:"
+            add_suspicious_file "$log"
             echo "$ACCESS_HITS"
         fi
     fi
@@ -317,6 +411,28 @@ section "SUMMARY"
 echo "High-confidence findings : $HIGH"
 echo "Suspicious/hunt findings : $WARN"
 echo "Informational findings   : $INFO"
+echo
+
+echo "SUSPICIOUS FILES / ARTIFACT PATHS"
+echo "----------------------------------------------------------------------"
+if [ -n "$SUSPICIOUS_FILES" ]; then
+    OLDIFS="$IFS"
+    IFS='
+'
+    for p in $SUSPICIOUS_FILES; do
+        [ -n "$p" ] || continue
+        case "$p" in
+            "$SELF_ARG"|*/"$SELF_NAME")
+                continue
+                ;;
+        esac
+        echo "$p"
+    done
+    IFS="$OLDIFS"
+else
+    echo "(none identified by file-based checks)"
+fi
+echo "----------------------------------------------------------------------"
 echo
 
 if [ "$HIGH" -gt 0 ]; then
