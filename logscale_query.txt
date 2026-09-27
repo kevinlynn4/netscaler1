@@ -1,0 +1,117 @@
+(
+    (
+        /\/etc\/httpd\.conf/i
+        and
+        /(httpd-php|x-httpd-php|AddHandler|AddType|SetHandler|RemoveHandler|RemoveType|FilesMatch|php_flag|Require[[:space:]]+all|sed[[:space:]]|perl[[:space:]]+-p|echo[[:space:]]|printf[[:space:]]|tee[[:space:]]|cp[[:space:]]|mv[[:space:]])/i
+    )
+
+    or /#[[:space:]]*Require[[:space:]]+all[[:space:]]+denied/i
+
+    or /#[[:space:]]*php_flag[[:space:]]+engine[[:space:]]+off/i
+
+    or (
+        /(httpd-php|x-httpd-php)/i
+        and /\.[A-Za-z0-9]{1,8}/
+    )
+
+    or (
+        /\/etc\/monitrc/i
+        and
+        /(sed|perl|echo|printf|tee|cp|mv|rm|#)/i
+    )
+
+    or /(pkill|killall|kill)[[:space:]].*monit/i
+
+    or /(pkill|killall|kill|disable|stop).*nsfsyncd/i
+
+    or /\/var\/vpn\/themes\/(info|prod|log|logout|vpn|config)\.php/i
+
+    or /\/var\/vpn\/themes\/imgs\/(netscaler\.1|netscaler\.php|ctxHeaderLogon\.php)/i
+
+    or /\/netscaler\/logon\/LogonPoint\/uiareas\/ui_style\.php/i
+
+    or /\/netscaler\/logon\/sanpdebug\.php/i
+
+    or /\/var\/nstmp\/\.nscache\/httpd/i
+
+    or /\/tmp\/\.init\/httpd/i
+
+    or /\/var\/tmp\/(the|npc)([[:space:]]|$)/i
+
+    or /\/var\/tmp\/(bash|sh)([[:space:]]|$)/i
+
+    or /chmod[[:space:]]+4[0-9][0-9][0-9][[:space:]]+\/(var\/tmp|tmp)\//i
+
+    or /cp[[:space:]]+\/usr\/bin\/bash[[:space:]]+\/var\/tmp\//i
+
+    or /\/var\/(crontabs|cron\/tabs)\/nobody/i
+
+    or /\/flash\/nsconfig\/rc\.netscaler/i
+
+    or /30[[:space:]]+02[[:space:]]+\*[[:space:]]+\*[[:space:]]+\*[[:space:]]+nohup[[:space:]]+\/var\/tmp\/the/i
+
+    or /blv_encode/i
+
+    or /openssl_public_decrypt/i
+
+    or /\$_REQUEST[[:space:]]*\[[[:space:]]*["']123["'][[:space:]]*\]/i
+
+    or /@eval[[:space:]]*\(/i
+
+    or /\/var\/vpn\/themes\/insight-new-min\.js/i
+
+    or /\/tmp\/cccd\.debug/i
+
+    or /\/nsconfig\/\.F[12]\.key/i
+
+    or (
+        /\/flash\/nsconfig\/ns\.conf/i
+        and /\/var\/vpn\/themes/i
+    )
+
+    or (
+        /\/nsconfig\/\.F[12]\.key/i
+        and /\/var\/vpn\/themes/i
+    )
+
+    or /\/netscaler\/portal\/templates\/\.xml/i
+
+    or /cat[[:space:]]+\/nsconfig\/ns\.conf.*\/netscaler\/portal\/templates/i
+
+    or /\/var\/core\/NSPPE/i
+
+    or /pwd;pwd;pwd;pwd;pwd;/i
+
+    or /HeadlessChrome\/112\.0\.5615\.121/i
+
+    or /POST.*\.pl[[:space:]]+HTTP\/1\.[01].*200/i
+
+    or /GET.*\.xml[[:space:]]+HTTP\/1\.[01].*200/i
+
+    or /\/oauth\/idp\/\.well-known\/openid-configuration/i
+
+    or (
+        /\/var\/vpn\//
+        and /\.(php|pl|py|sh|elf)/i
+    )
+
+    or (
+        /\/var\/netscaler\/logon\//
+        and /\.(php|xhtml|pl|py|sh)/i
+    )
+
+    or (
+        /\/var\/python\//
+        and /\.(php|pl|py|sh)/i
+    )
+
+    or (
+        /\/netscaler\/ns_gui\//
+        and /\.(php|pl|py|sh)/i
+    )
+
+    or (
+        /\/var\/netscaler\/.*\.(php|xhtml)/i
+        and not /\/var\/netscaler\/gui\/admin_ui\//i
+    )
+)
